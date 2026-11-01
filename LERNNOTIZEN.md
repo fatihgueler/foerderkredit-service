@@ -59,3 +59,48 @@ mit kurzer Musterantwort. Ziel: jede Zeile im Code erklären können.
    400 heißt: Die Anfrage ist formal kaputt, z. B. Pflichtfeld fehlt. Ein nicht förderfähiger Antrag
    ist formal korrekt und wird gespeichert; er erfüllt nur fachliche Regeln nicht. Das ist ein
    fachliches Ergebnis, kein technischer Fehler.
+
+---
+
+## M2 – Regel-Engine und Prüf-Endpoint
+
+### Was gebaut wurde
+- **Interface `Foerderregel`** mit genau einer Methode `RegelErgebnis pruefe(Antrag antrag)`.
+- **Fünf FIKTIVE Regeln**, jede eine eigene `@Component`: `KreditbetragRegel`, `KmuRegel`,
+  `StandortRegel`, `BranchenRegel`, `LaufzeitRegel`.
+- **`FoerderpruefungService`** bekommt von Spring alle Regeln als `List<Foerderregel>`, wendet
+  alle an und bildet das Gesamtergebnis `foerderfaehig` (nur `true`, wenn ALLE Regeln erfüllt sind).
+- **Endpoint** `POST /api/antraege/{id}/pruefung` liefert alle Einzelergebnisse plus Gesamtergebnis.
+- **Tests**: je Regel erfüllt/nicht erfüllt inkl. Grenzwerte (z. B. 9.999,99 € / 10.000,00 €,
+  249 / 250 Mitarbeitende), Engine-Test mit Lambda-Regeln, Registrierungstest (findet Spring alle 5?),
+  Controller-Test.
+
+### Warum so entschieden
+- **Strategy-Pattern**: Jede Regel ist eine austauschbare „Strategie“ hinter demselben Interface.
+  Die Engine kennt keine konkrete Regel. Neue Regel = neue Klasse mit `@Component`, fertig.
+  Es gibt keinen großen `if/else`-Block, der mit jeder Regel wächst (Open-Closed-Prinzip:
+  offen für Erweiterung, geschlossen für Änderung).
+- **Alle Regeln prüfen statt beim ersten Fehler abbrechen**: Der Sachbearbeiter sieht sofort alle
+  Mängel und kann in einer einzigen Rückfrage alles klären.
+- **`compareTo` statt `equals` bei `BigDecimal`**: `new BigDecimal("10000.0").equals(new BigDecimal("10000.00"))`
+  ist `false`, weil `equals` auch die Anzahl der Nachkommastellen vergleicht. `compareTo` vergleicht
+  nur den Wert. In Tests nutze ich deshalb `isEqualByComparingTo`.
+- **Begründung als Text**: Banken müssen Entscheidungen nachvollziehbar begründen. Jede Regel sagt
+  deshalb nicht nur ja/nein, sondern auch warum.
+- **Sortierung nach Regelname**: Die Reihenfolge, in der Spring Beans liefert, ist nicht garantiert.
+  Durch Sortieren sieht die API-Antwort immer gleich aus.
+- **`POST` für die Prüfung**: Es ist eine fachliche Aktion („Prüfung durchführen“), nicht nur das
+  Lesen einer Ressource. Die Prüfung ändert in diesem Projekt (noch) nichts in der Datenbank.
+
+### Interviewfragen
+1. **„Wie würden Sie eine sechste Regel hinzufügen?“**
+   Eine neue Klasse anlegen, die `Foerderregel` implementiert und mit `@Component` markiert ist,
+   plus Unit-Test. Sonst ändert sich nichts; Spring nimmt sie automatisch in die Liste auf.
+   Den `RegelRegistrierungTest` würde ich um den neuen Klassennamen ergänzen.
+2. **„Wie testen Sie die Engine, ohne von den echten Regeln abhängig zu sein?“**
+   `Foerderregel` hat nur eine Methode, ist also ein funktionales Interface. Im Test übergebe ich
+   Lambdas wie `a -> RegelErgebnis.nichtErfuellt("A", "...")` und prüfe nur die Engine-Logik.
+3. **„Warum sind die Regeln nicht in der Datenbank konfiguriert?“**
+   Für dieses Projekt reicht Code: Regeln sind getestet, versioniert und im Code-Review sichtbar.
+   Würden Fachbereiche Grenzwerte oft selbst ändern wollen, könnte man die Werte (z. B. 2 Mio. €)
+   in eine Konfiguration auslagern. Das wäre aber eine Anforderung, die es hier nicht gibt.
