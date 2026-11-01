@@ -327,3 +327,19 @@ mit kurzer Musterantwort. Ziel: jede Zeile im Code erklären können.
    der Übergang verboten sein (409). Vollständig wäre es, die Version an den Client zu geben
    (z. B. als `ETag`) und beim Statuswechsel mitzuschicken (`If-Match`). Das wäre die nächste
    Ausbaustufe.
+
+---
+
+## Feinschliff – API-Dokumentation und CI
+
+- **`@OpenAPIDefinition`** an `FoerderkreditApplication`: eigener Titel, Version und Beschreibung in der
+  Swagger-UI statt „OpenAPI definition v0“.
+- **`@ApiResponse`** an jedem Endpoint: Neben dem Erfolgsfall (200 bzw. 201) sind alle möglichen
+  Fehlercodes (400, 404, 409, 422) mit Beschreibung und `application/problem+json` dokumentiert.
+  Wer die API nutzt, sieht so ohne Code-Lesen, welche Fehler kommen können.
+- **GitHub Actions auf `@v5`**: Die v4-Versionen liefen noch auf dem veralteten Node 20.
+
+**Interviewfrage:** *„Warum dokumentieren Sie Fehlercodes in der OpenAPI-Beschreibung?“*
+Die API-Doku ist ein Vertrag mit den Nutzern der Schnittstelle (z. B. ein Frontend-Team). Wenn dort
+nur der Erfolgsfall steht, muss jeder selbst herausfinden, was bei Fehlern passiert. Mit dokumentierten
+Fehlern und einheitlichem Format (ProblemDetail) kann ein Client gezielt darauf reagieren.
