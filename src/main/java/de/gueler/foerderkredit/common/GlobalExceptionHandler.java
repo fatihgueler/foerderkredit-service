@@ -3,6 +3,8 @@ package de.gueler.foerderkredit.common;
 import com.fasterxml.jackson.databind.exc.InvalidFormatException;
 import de.gueler.foerderkredit.antrag.AntragNichtGefundenException;
 import de.gueler.foerderkredit.tilgung.TilgungsplanNichtBerechenbarException;
+import de.gueler.foerderkredit.workflow.NichtFoerderfaehigException;
+import de.gueler.foerderkredit.workflow.UngueltigerStatuswechselException;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.TreeMap;
@@ -117,6 +119,27 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     public ProblemDetail behandleTilgungsplanNichtBerechenbar(TilgungsplanNichtBerechenbarException ex) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage());
         problem.setTitle("Tilgungsplan nicht berechenbar");
+        return problem;
+    }
+
+    /** 409: Der Übergang passt nicht zum aktuellen Zustand des Antrags. */
+    @ExceptionHandler(UngueltigerStatuswechselException.class)
+    public ProblemDetail behandleUngueltigenStatuswechsel(UngueltigerStatuswechselException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
+        problem.setTitle("Statuswechsel nicht erlaubt");
+        problem.setProperty("aktuellerStatus", ex.getVonStatus());
+        problem.setProperty("gewuenschterStatus", ex.getNachStatus());
+        // Sortiert, damit die Antwort immer gleich aussieht (Set hat keine feste Reihenfolge).
+        problem.setProperty("erlaubteFolgestatus", ex.getErlaubteFolgestatus().stream().sorted().toList());
+        return problem;
+    }
+
+    /** 422: Die Anfrage ist formal richtig, aber fachlich nicht umsetzbar. */
+    @ExceptionHandler(NichtFoerderfaehigException.class)
+    public ProblemDetail behandleNichtFoerderfaehig(NichtFoerderfaehigException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage());
+        problem.setTitle("Antrag nicht förderfähig");
+        problem.setProperty("nichtErfuellteRegeln", ex.getNichtErfuellteRegeln());
         return problem;
     }
 

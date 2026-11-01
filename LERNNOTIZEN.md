@@ -164,3 +164,60 @@ mit kurzer Musterantwort. Ziel: jede Zeile im Code erklären können.
    unabhängig mit einem anderen Werkzeug geprüft, drittens Invarianten getestet, die immer gelten
    müssen: Summe Tilgung = Kreditbetrag, Restschuld am Ende 0,00, nie negativ, Summe der Raten =
    Zinsen + Tilgung.
+
+---
+
+## M4 – Workflow, Statuswechsel, Audit-Log und Historie
+
+### Was gebaut wurde
+- **Zustandsautomat in `AntragStatus`**: `erlaubteFolgestatus()` (ein `switch` über alle Status),
+  `darfWechselnZu(...)`, `istFinal()`.
+- **Flyway `V2__audit_eintrag_anlegen.sql`**: Tabelle `audit_eintrag` mit Fremdschlüssel auf `antrag`.
+- **Paket `audit`**: `AuditEintrag` (unveränderliche Entity), `AuditRepository` (nur `save` + Lesen),
+  `AuditService`, `HistorieController` (`GET /api/antraege/{id}/historie`).
+- **Paket `workflow`**: `StatuswechselService`, `StatuswechselController`
+  (`POST /api/antraege/{id}/statuswechsel`), `UngueltigerStatuswechselException` (409),
+  `NichtFoerderfaehigException` (422).
+- **Tests**: `ZustandsautomatTest` (alle 8 erlaubten Übergänge, Prüfung aller 36 Kombinationen,
+  7 benannte verbotene Übergänge, finale Status), Service-Tests mit Mockito, Controller-Tests für
+  400/404/409/422, Audit-Tests.
+
+### Warum so entschieden
+- **Übergänge zentral im Enum**: Es gibt genau eine Stelle, an der steht, was erlaubt ist. Der
+  `switch` hat keinen `default`. Fügt jemand einen neuen Status hinzu, kompiliert der Code nicht, bis
+  dessen Übergänge festgelegt sind. So kann man keinen Status „vergessen“.
+- **Enum im Paket `antrag`, Logik im Paket `workflow`**: Die Entity `Antrag` braucht den Status als
+  Feld. Läge das Enum in `workflow`, würden sich `antrag` und `workflow` gegenseitig kennen
+  (Paketzyklus). So zeigen alle Abhängigkeiten in eine Richtung: `workflow → regeln/audit → antrag`.
+- **409 Conflict** für verbotene Übergänge: Die Anfrage ist formal richtig, passt aber nicht zum
+  *aktuellen Zustand* der Ressource. Genau dafür ist 409 gedacht.
+- **422 Unprocessable Entity** für „nicht förderfähig“: Anfrage verstanden und formal richtig, aber
+  fachlich nicht ausführbar. Die Antwort nennt die nicht erfüllten Regeln.
+- **Eine Transaktion für Statuswechsel und Audit**: `@Transactional` auf `wechsleStatus`.
+  `AuditService.protokolliere` hat `Propagation.MANDATORY`: Ohne laufende Transaktion wirft Spring
+  sofort einen Fehler. Damit kann niemand den Audit-Eintrag versehentlich in einer eigenen
+  Transaktion schreiben. Fliegt irgendwo eine Exception, wird beides zurückgerollt
+  (manuell gegen PostgreSQL geprüft: nach einem 422 gibt es keinen zusätzlichen Audit-Eintrag).
+- **Kein `save()` beim Statuswechsel**: Der geladene Antrag ist innerhalb der Transaktion von JPA
+  verwaltet („managed“). Hibernate merkt die Änderung und schreibt sie beim Commit (Dirty Checking).
+- **Revisionssicheres Audit-Log** über drei Ebenen: `@Immutable` (Hibernate schreibt keine Updates),
+  keine Setter, und `AuditRepository extends Repository` statt `JpaRepository`, damit es gar keine
+  `delete`-Methode gibt.
+- **`antragId` als einfache UUID-Spalte** im Audit statt `@ManyToOne`: Der Audit-Eintrag ist ein
+  einfacher Datensatz, er soll keine Objekte nachladen. Die Datenbank sichert den Bezug trotzdem
+  über den Fremdschlüssel.
+- **Die Prüfung beim Bewilligen läuft erneut**: Wir verlassen uns nicht auf ein früheres Ergebnis von
+  `/pruefung`. Entscheidend ist der Stand im Moment der Bewilligung.
+
+### Interviewfragen
+1. **„Was passiert, wenn das Schreiben des Audit-Eintrags fehlschlägt?“**
+   Die Exception verlässt die `@Transactional`-Methode, Spring rollt die ganze Transaktion zurück.
+   Der Status bleibt also unverändert. Es kann keinen Statuswechsel ohne Audit-Eintrag geben.
+2. **„Warum `Propagation.MANDATORY` und nicht das Standard-`REQUIRED`?“**
+   `REQUIRED` würde ohne bestehende Transaktion still eine *neue* starten. Dann könnte jemand
+   `protokolliere` außerhalb eines Statuswechsels aufrufen, und Audit und Status wären nicht mehr
+   gekoppelt. `MANDATORY` macht diese Annahme ausdrücklich und erzwingt sie.
+3. **„Zwei Sachbearbeiter ändern gleichzeitig denselben Antrag. Was passiert?“**
+   Ehrliche Antwort: Das ist in diesem Projekt noch nicht abgesichert. Beide könnten denselben alten
+   Status lesen. Die Lösung wäre Optimistic Locking mit einer `@Version`-Spalte: Der zweite Commit
+   schlägt dann mit einer `OptimisticLockException` fehl und man antwortet mit 409.
