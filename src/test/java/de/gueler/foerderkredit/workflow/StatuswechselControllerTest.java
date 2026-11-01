@@ -24,6 +24,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -105,6 +106,19 @@ class StatuswechselControllerTest {
                 .andExpect(jsonPath("$.title").value("Antrag nicht förderfähig"))
                 .andExpect(jsonPath("$.nichtErfuellteRegeln.length()").value(1))
                 .andExpect(jsonPath("$.nichtErfuellteRegeln[0].regelName").value("Standort"));
+    }
+
+    @Test
+    void liefert409WennJemandAnderesDenAntragGleichzeitigGeaendertHat() throws Exception {
+        when(statuswechselService.wechsleStatus(eq(id), any()))
+                .thenThrow(new ObjectOptimisticLockingFailureException("Antrag", id));
+
+        mockMvc.perform(post("/api/antraege/{id}/statuswechsel", id)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"neuerStatus\": \"IN_PRUEFUNG\", \"bearbeiter\": \"m.mueller\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.title").value("Gleichzeitige Änderung"))
+                .andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.containsString("zwischenzeitlich")));
     }
 
     private AntragResponse antragImStatus(AntragStatus status) {

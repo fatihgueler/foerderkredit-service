@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
 import org.springframework.beans.TypeMismatchException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.data.mapping.PropertyReferenceException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -131,6 +132,19 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         problem.setProperty("gewuenschterStatus", ex.getNachStatus());
         // Sortiert, damit die Antwort immer gleich aussieht (Set hat keine feste Reihenfolge).
         problem.setProperty("erlaubteFolgestatus", ex.getErlaubteFolgestatus().stream().sorted().toList());
+        return problem;
+    }
+
+    /**
+     * 409: Zwei Bearbeiter haben denselben Antrag gleichzeitig geändert. Der zweite Commit
+     * ist an der Versionsprüfung ({@code @Version}) gescheitert und wurde komplett zurückgerollt.
+     */
+    @ExceptionHandler(OptimisticLockingFailureException.class)
+    public ProblemDetail behandleGleichzeitigeAenderung(OptimisticLockingFailureException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT,
+                "Der Antrag wurde zwischenzeitlich von jemand anderem geändert. "
+                        + "Bitte den Antrag neu laden und den Statuswechsel erneut versuchen.");
+        problem.setTitle("Gleichzeitige Änderung");
         return problem;
     }
 

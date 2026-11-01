@@ -218,9 +218,9 @@ mit kurzer Musterantwort. Ziel: jede Zeile im Code erklären können.
    `protokolliere` außerhalb eines Statuswechsels aufrufen, und Audit und Status wären nicht mehr
    gekoppelt. `MANDATORY` macht diese Annahme ausdrücklich und erzwingt sie.
 3. **„Zwei Sachbearbeiter ändern gleichzeitig denselben Antrag. Was passiert?“**
-   Ehrliche Antwort: Das ist in diesem Projekt noch nicht abgesichert. Beide könnten denselben alten
-   Status lesen. Die Lösung wäre Optimistic Locking mit einer `@Version`-Spalte: Der zweite Commit
-   schlägt dann mit einer `OptimisticLockException` fehl und man antwortet mit 409.
+   Seit M6 abgesichert: Optimistic Locking mit einer `@Version`-Spalte. Der zweite Commit scheitert
+   an der Versionsprüfung, wird komplett zurückgerollt (inkl. Audit-Eintrag), und der Client bekommt
+   409. Details siehe M6.
 
 ---
 
@@ -265,3 +265,65 @@ mit kurzer Musterantwort. Ziel: jede Zeile im Code erklären können.
    Die GitHub Action führt bei jedem Push und Pull Request `./mvnw verify` aus, also alle Tests.
    In GitHub kann man zusätzlich eine Branch-Protection-Regel setzen, sodass ein Pull Request nur
    gemergt werden darf, wenn die CI grün ist.
+
+---
+
+## M6 – Optimistic Locking (gleichzeitige Änderungen)
+
+*Erweiterung über die ursprüngliche Spezifikation hinaus, auf eigenen Wunsch.*
+
+### Was gebaut wurde
+- **Flyway `V3__antrag_version.sql`**: neue Spalte `version BIGINT NOT NULL DEFAULT 0` in `antrag`.
+- **`@Version private long version`** in der Entity `Antrag` (plus Getter, kein Setter).
+- **`GlobalExceptionHandler`**: `OptimisticLockingFailureException` → **409 „Gleichzeitige Änderung“**.
+- **Tests**: `GleichzeitigeAenderungIT` (zwei Bearbeiter, echter Konflikt gegen PostgreSQL,
+  Version zählt hoch) und ein 409-Test in `StatuswechselControllerTest`.
+
+### Das Problem (Lost Update), einfach erklärt
+1. Bearbeiterin A öffnet den Antrag: Status `EINGEREICHT`.
+2. Bearbeiter B öffnet denselben Antrag, nimmt ihn in Prüfung und speichert: `IN_PRUEFUNG`.
+3. A hat noch den alten Stand und zieht den Antrag zurück. Ohne Schutz würde A's Speichern
+   B's Änderung einfach überschreiben, und niemand merkt es.
+
+### Wie `@Version` das verhindert
+- Beim Laden merkt sich Hibernate die Version (z. B. `0`).
+- Beim Speichern schreibt Hibernate:
+  `UPDATE antrag SET status = ?, version = 1 WHERE id = ? AND version = 0`
+- Hat B inzwischen gespeichert, steht in der Datenbank schon `version = 1`. A's UPDATE trifft
+  **0 Zeilen**. Hibernate erkennt das und wirft eine Exception, Spring übersetzt sie in eine
+  `ObjectOptimisticLockingFailureException`.
+- Die Exception fliegt beim **Commit** von A's Transaktion. Deshalb wird alles darin
+  zurückgerollt, auch A's Audit-Eintrag. In der Datenbank steht nur B's Änderung.
+- Der `GlobalExceptionHandler` macht daraus 409 mit der Bitte, neu zu laden.
+
+### Warum so entschieden
+- **Optimistisch statt pessimistisch**: Optimistisch sperrt nichts und prüft erst beim Speichern.
+  Das ist schnell und passt, weil Konflikte am selben Antrag selten sind. Pessimistisch
+  (`SELECT ... FOR UPDATE`) sperrt die Zeile beim Lesen, alle anderen müssen warten. Das lohnt
+  sich nur, wenn Konflikte häufig sind oder ein Konflikt sehr teuer wäre.
+- **409 Conflict**: Die Anfrage war in Ordnung, passt aber nicht mehr zum aktuellen Zustand der
+  Ressource. Der Client kann neu laden und es erneut versuchen. 500 wäre falsch, weil der Server
+  korrekt funktioniert hat.
+- **`DEFAULT 0` in der Migration**: Bestehende Anträge bekommen sofort einen gültigen Startwert.
+  So läuft die Migration auch auf einer Datenbank mit Daten (lokal geprüft).
+- **Kein Setter für `version`**: Den Wert verwaltet nur Hibernate. Würde man ihn von Hand
+  setzen, wäre die Prüfung wertlos.
+- **Der Test ohne Threads**: Echte Parallelität mit Threads ist im Test unzuverlässig (mal gewinnt
+  der eine, mal der andere). Stattdessen öffnet der Test A's Transaktion, lässt B in einer
+  *neuen* Transaktion (`PROPAGATION_REQUIRES_NEW`) komplett durchlaufen und macht dann mit A
+  weiter. Das Ergebnis ist bei jedem Lauf gleich.
+
+### Interviewfragen
+1. **„Wann genau merkt das System den Konflikt?“**
+   Erst beim Schreiben, also wenn Hibernate beim Commit das `UPDATE ... WHERE version = ?`
+   ausführt und 0 Zeilen getroffen werden. Vorher weiß niemand, dass es einen Konflikt gibt.
+2. **„Was passiert mit dem Audit-Eintrag der gescheiterten Transaktion?“**
+   Er wird mit zurückgerollt, weil er in derselben Transaktion geschrieben wurde
+   (`Propagation.MANDATORY`). Im Audit-Log steht also nie ein Statuswechsel, der gar nicht
+   stattgefunden hat. Das prüft `GleichzeitigeAenderungIT`.
+3. **„Schützt das auch, wenn A den Antrag vor einer Stunde im Browser geöffnet hat?“**
+   Nur zum Teil. `@Version` schützt Transaktionen, die sich zeitlich überschneiden. Zwischen zwei
+   HTTP-Requests schützt hier der Zustandsautomat: Ist der Status inzwischen ein anderer, kann
+   der Übergang verboten sein (409). Vollständig wäre es, die Version an den Client zu geben
+   (z. B. als `ETag`) und beim Statuswechsel mitzuschicken (`If-Match`). Das wäre die nächste
+   Ausbaustufe.

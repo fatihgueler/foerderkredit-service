@@ -8,6 +8,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -76,6 +77,16 @@ public class Antrag {
 
     @Column(name = "geaendert_am", nullable = false)
     private Instant geaendertAm;
+
+    /**
+     * Optimistic Locking: Hibernate verwaltet diesen Wert selbst (nie von Hand setzen).
+     * Ändern zwei Transaktionen gleichzeitig denselben Antrag, gewinnt die erste. Die zweite
+     * scheitert beim Commit mit einer {@code ObjectOptimisticLockingFailureException},
+     * und alles in ihr (auch der Audit-Eintrag) wird zurückgerollt.
+     */
+    @Version
+    @Column(name = "version", nullable = false)
+    private long version;
 
     /** Nur für JPA/Hibernate. Hibernate braucht einen parameterlosen Konstruktor. */
     protected Antrag() {
@@ -184,5 +195,9 @@ public class Antrag {
 
     public Instant getGeaendertAm() {
         return geaendertAm;
+    }
+
+    public long getVersion() {
+        return version;
     }
 }

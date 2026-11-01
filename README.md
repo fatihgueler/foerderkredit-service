@@ -52,7 +52,7 @@ flowchart TD
     common -.-> tilgung
     common -.-> workflow
 
-    antrag --> db[(PostgreSQL 16<br/>Flyway V1, V2)]
+    antrag --> db[(PostgreSQL 16<br/>Flyway V1–V3)]
     audit --> db
 ```
 
@@ -201,7 +201,7 @@ Alle Fehler kommen als `application/problem+json`. Beispiel für einen verbotene
 |--------|------|
 | 400 | Validierungsfehler (Feld `fehler` mit einer deutschen Meldung pro Feld), ungültiges JSON, unbekannter Enum-Wert, ungültige UUID |
 | 404 | Antrag existiert nicht |
-| 409 | Statuswechsel im Zustandsautomaten nicht erlaubt |
+| 409 | Statuswechsel im Zustandsautomaten nicht erlaubt, oder jemand anderes hat den Antrag gleichzeitig geändert (Optimistic Locking) |
 | 422 | Bewilligung, obwohl nicht förderfähig (Feld `nichtErfuellteRegeln`), oder kein Tilgungsplan berechenbar |
 
 ---
@@ -220,7 +220,7 @@ Integrationstests (`*IT`, Failsafe) aus.
 | **Unit-Tests** (ohne Spring) | JUnit 5, AssertJ, Mockito | `TilgungsplanRechnerTest` (von Hand nachgerechnetes Beispiel + Grenzfälle), je Regel ein Test für erfüllt/nicht erfüllt, `ZustandsautomatTest` (alle erlaubten und 7 benannte verbotene Übergänge), Service-Tests mit Mocks |
 | **Web-Slice-Tests** | `@WebMvcTest`, MockMvc | Ein Test je Controller: JSON-Format, Validierungsfehler (400), 404, 409, 422 |
 | **Spring-Kontext-Test** | `@SpringJUnitConfig` | `RegelRegistrierungTest`: findet Spring wirklich alle fünf Regeln? |
-| **Integrationstests** | `@SpringBootTest`, Testcontainers (PostgreSQL 16) | `AntragLebenszyklusIT`: anlegen → prüfen → bewilligen → Historie hat 2 Einträge; Rollback bei 422. `AntragRepositoryIT`: Flyway-Schema passt zu den Entities |
+| **Integrationstests** | `@SpringBootTest`, Testcontainers (PostgreSQL 16) | `AntragLebenszyklusIT`: anlegen → prüfen → bewilligen → Historie hat 2 Einträge; Rollback bei 422. `GleichzeitigeAenderungIT`: zweiter gleichzeitiger Statuswechsel scheitert, nichts wird überschrieben. `AntragRepositoryIT`: Flyway-Schema passt zu den Entities |
 
 Die erwarteten Werte im Tilgungsplan-Test stammen **nicht** aus dem getesteten Code. Der Rechenweg
 steht als Kommentar im Test, und die Werte wurden zusätzlich unabhängig nachgerechnet.
@@ -288,6 +288,20 @@ Transaktion aufrufen. Schlägt etwas fehl, wird beides zurückgerollt.
 
 Das Audit-Log ist **nur zum Anhängen** gedacht: Die Entity ist `@Immutable` und hat keine Setter, und
 das Repository erweitert nur `Repository` (nicht `JpaRepository`), sodass es keine `delete`-Methode gibt.
+
+### Gleichzeitige Änderungen (Optimistic Locking)
+
+Ändern zwei Sachbearbeiter denselben Antrag gleichzeitig, darf der zweite den ersten nicht still
+überschreiben („Lost Update“). Die Tabelle `antrag` hat deshalb eine Spalte `version`
+(Flyway V3), die Entity ein Feld mit `@Version`. Hibernate schreibt jede Änderung als
+`UPDATE ... SET version = alt + 1 WHERE id = ? AND version = alt`. Hat inzwischen jemand anderes
+committet, trifft das UPDATE keine Zeile: Die zweite Transaktion wird komplett zurückgerollt
+(auch ihr Audit-Eintrag), und der Client bekommt **409 „Gleichzeitige Änderung“**.
+`GleichzeitigeAenderungIT` spielt genau diesen Fall gegen PostgreSQL nach.
+
+Optimistisch heißt: Es wird nichts gesperrt, Konflikte werden erst beim Speichern erkannt. Das passt,
+weil gleichzeitige Änderungen am selben Antrag selten sind. Pessimistisches Locking
+(`SELECT ... FOR UPDATE`) würde jeden Zugriff sperren und andere warten lassen.
 
 ### Strategy-Pattern für die Förderregeln
 
