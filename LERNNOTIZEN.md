@@ -104,3 +104,63 @@ mit kurzer Musterantwort. Ziel: jede Zeile im Code erklären können.
    Für dieses Projekt reicht Code: Regeln sind getestet, versioniert und im Code-Review sichtbar.
    Würden Fachbereiche Grenzwerte oft selbst ändern wollen, könnte man die Werte (z. B. 2 Mio. €)
    in eine Konfiguration auslagern. Das wäre aber eine Anforderung, die es hier nicht gibt.
+
+---
+
+## M3 – Tilgungsplan-Rechner und Endpoint
+
+### Was gebaut wurde
+- **`TilgungsplanRechner`**: reine Java-Klasse ohne Spring. Berechnet ein Annuitätendarlehen mit
+  monatlichen Raten, tilgungsfreier Anlaufzeit und Rundungsausgleich in der letzten Rate.
+- **Records `Rate` und `Tilgungsplan`** (Monat, Datum, Zins-, Tilgungsanteil, Rate, Restschuld; Summen).
+- **`TilgungsplanService`** holt den Antrag und legt das Datum der ersten Rate fest
+  (1. des Monats nach Antragstellung). **Endpoint** `GET /api/antraege/{id}/tilgungsplan`.
+- **422 Unprocessable Entity**, wenn mit den Antragsdaten kein Plan möglich ist
+  (z. B. tilgungsfreie Jahre ≥ Laufzeit).
+- **Tests**: von Hand nachgerechnetes Beispiel (100.000 €, 4 %, 10 Jahre, 1 Jahr tilgungsfrei),
+  Grenzfälle (0 tilgungsfreie Jahre, 0,001 % Zins, 0 % Zins, Kleinstbetrag), parametrisierte
+  Invarianten-Tests, Controller- und Service-Test.
+
+### So funktioniert die Rechnung (einfach erklärt)
+1. Monatszins `i` = Jahreszins / 100 / 12.
+2. In der Anlaufzeit zahlt man jeden Monat nur `Restschuld * i` an Zinsen; die Schuld bleibt gleich.
+3. Danach ist die Rate jeden Monat gleich hoch (Annuität): `A = K * i * q^n / (q^n - 1)` mit
+   `q = 1 + i` und `n` = Anzahl Monate mit Tilgung. Bei 0 % Zins einfach `K / n`.
+4. Jeden Monat: Zins = Restschuld * i (gerundet), Tilgung = A − Zins, neue Restschuld = alt − Tilgung.
+   Weil die Restschuld sinkt, sinken die Zinsen, und der Tilgungsanteil wächst.
+5. Weil auf Cent gerundet wird, bleibt am Ende ein kleiner Rest übrig. Die letzte Rate tilgt deshalb
+   genau die Restschuld, und die Restschuld ist exakt 0,00.
+
+### Warum so entschieden
+- **`BigDecimal` statt `double`**: `0.1 + 0.2` ergibt mit `double` `0.30000000000000004`, weil
+  `double` Zahlen binär speichert. Bei Geld darf kein Cent verloren gehen. `BigDecimal` rechnet
+  dezimal und exakt.
+- **`MathContext.DECIMAL128`** (34 Stellen) für Zwischenergebnisse: Der Monatszins 0,04/12 ist
+  periodisch (0,00333…) und lässt sich nicht exakt darstellen. Ohne `MathContext` würde
+  `divide` eine `ArithmeticException` werfen. 34 Stellen sind viel genauer als nötig.
+- **`RoundingMode.HALF_UP`** (kaufmännisch: ab 5 aufrunden), und zwar nur dort, wo ein Betrag
+  im Plan erscheint. Zwischenschritte werden nicht gerundet, damit sich keine Fehler aufsummieren.
+- **Rechner ohne Spring**: Keine Datenbank, keine Beans. Der Test ist ein einfaches `new`, läuft
+  in Millisekunden und testet nur die Mathematik.
+- **Erwartete Werte unabhängig nachgerechnet**: Wenn ich die Erwartung aus meinem eigenen Code
+  übernehme, testet der Test nichts. Die ersten Monate sind mit dem Taschenrechner nachvollziehbar,
+  Gesamtzinsen und letzte Rate habe ich zusätzlich mit Python `decimal` nachgerechnet.
+- **Datum = 1. des Monats nach Antragstellung**: So ist der Plan für einen Antrag immer gleich, egal
+  wann man ihn abruft. Das ist eine vereinfachende Annahme, die im Code dokumentiert ist.
+- **`.min(restschuld)`** bei der Tilgung: Bei winzigen Beträgen (z. B. 2,00 € auf 240 Monate) wird
+  die Annuität aufgerundet (0,0083 → 0,01). Ohne diese Grenze würde mehr getilgt als offen ist und die
+  Restschuld negativ. Ein Test (`wirdBeiKleinstbetragNieNegativ`) sichert das ab.
+
+### Interviewfragen
+1. **„Warum kommt in der letzten Rate ein anderer Betrag heraus als in den anderen?“**
+   Weil jede Rate auf Cent gerundet wird, entsteht über 108 Monate eine kleine Differenz. Die letzte
+   Rate tilgt genau die Restschuld, damit die Schuld exakt 0,00 ist. Das ist bei Banken üblich
+   („Schlussrate“). Im Beispiel: 1.103,68 € statt 1.104,10 €.
+2. **„Was ist der Unterschied zwischen `setScale(2, HALF_UP)` und `round(new MathContext(2))`?“**
+   `setScale(2)` legt die Anzahl der Nachkommastellen fest (Cent). `MathContext(2)` legt die Anzahl
+   der *signifikanten* Stellen fest: 1234,56 würde zu 1200. Für Geldbeträge braucht man `setScale`.
+3. **„Wie haben Sie sichergestellt, dass Ihre Berechnung stimmt?“**
+   Erstens ein Beispiel von Hand nachgerechnet (Rechenweg im Testkommentar), zweitens die Werte
+   unabhängig mit einem anderen Werkzeug geprüft, drittens Invarianten getestet, die immer gelten
+   müssen: Summe Tilgung = Kreditbetrag, Restschuld am Ende 0,00, nie negativ, Summe der Raten =
+   Zinsen + Tilgung.

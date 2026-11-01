@@ -2,6 +2,7 @@ package de.gueler.foerderkredit.common;
 
 import com.fasterxml.jackson.databind.exc.InvalidFormatException;
 import de.gueler.foerderkredit.antrag.AntragNichtGefundenException;
+import de.gueler.foerderkredit.tilgung.TilgungsplanNichtBerechenbarException;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.TreeMap;
@@ -108,6 +109,14 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     public ProblemDetail behandleAntragNichtGefunden(AntragNichtGefundenException ex) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, ex.getMessage());
         problem.setTitle("Antrag nicht gefunden");
+        return problem;
+    }
+
+    /** 422: Der Antrag ist gespeichert, aber mit seinen Werten ist kein Tilgungsplan möglich. */
+    @ExceptionHandler(TilgungsplanNichtBerechenbarException.class)
+    public ProblemDetail behandleTilgungsplanNichtBerechenbar(TilgungsplanNichtBerechenbarException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage());
+        problem.setTitle("Tilgungsplan nicht berechenbar");
         return problem;
     }
 
