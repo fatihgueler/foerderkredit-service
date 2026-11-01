@@ -1,0 +1,22 @@
+# PostgreSQL 16 für die lokale Entwicklung.
+# Start: docker compose up -d   |   Stopp: docker compose down
+services:
+  postgres:
+    image: postgres:16
+    container_name: foerderkredit-postgres
+    environment:
+      POSTGRES_DB: foerderkredit
+      POSTGRES_USER: foerderkredit
+      POSTGRES_PASSWORD: foerderkredit
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-daten:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U foerderkredit -d foerderkredit"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres-daten:

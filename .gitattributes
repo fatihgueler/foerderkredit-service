@@ -1,0 +1,3 @@
+# mvnw muss Unix-Zeilenenden behalten, mvnw.cmd Windows-Zeilenenden.
+mvnw text eol=lf
+*.cmd text eol=crlf

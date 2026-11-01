@@ -1,0 +1,32 @@
+spring:
+  application:
+    name: foerderkredit-service
+
+  # Verbindungsdaten passend zu docker-compose.yml.
+  # Über Umgebungsvariablen überschreibbar, z. B. DB_URL=jdbc:postgresql://server:5432/db
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/foerderkredit}
+    username: ${DB_USER:foerderkredit}
+    password: ${DB_PASSWORD:foerderkredit}
+
+  jpa:
+    # Hibernate darf das Schema NIE selbst ändern. Das Schema kommt ausschließlich
+    # aus den Flyway-Migrationen; Hibernate prüft beim Start nur, ob die Entities passen.
+    hibernate:
+      ddl-auto: validate
+    # Keine Lazy-Loading-Datenbankzugriffe mehr, nachdem der Service fertig ist.
+    # Alle Datenzugriffe passieren in den @Transactional-Methoden der Services.
+    open-in-view: false
+
+  flyway:
+    locations: classpath:db/migration
+
+  data:
+    web:
+      pageable:
+        # Schutz vor zu großen Seiten, z. B. ?size=1000000
+        max-page-size: 100
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
