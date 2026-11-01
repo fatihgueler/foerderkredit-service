@@ -221,3 +221,47 @@ mit kurzer Musterantwort. Ziel: jede Zeile im Code erklären können.
    Ehrliche Antwort: Das ist in diesem Projekt noch nicht abgesichert. Beide könnten denselben alten
    Status lesen. Die Lösung wäre Optimistic Locking mit einer `@Version`-Spalte: Der zweite Commit
    schlägt dann mit einer `OptimisticLockException` fehl und man antwortet mit 409.
+
+---
+
+## M5 – Integrationstest, GitHub Actions, README
+
+### Was gebaut wurde
+- **`AntragLebenszyklusIT`**: startet die ganze Anwendung (`@SpringBootTest`) gegen eine echte
+  PostgreSQL 16 im Docker-Container (Testcontainers). Ablauf: Antrag anlegen → prüfen →
+  `IN_PRUEFUNG` → `BEWILLIGT` → Historie hat genau 2 Einträge → weiterer Wechsel ergibt 409.
+  Zwei weitere Fälle: Rollback bei 422 und Tilgungsplan aus der Datenbank.
+- **GitHub-Actions-Workflow** `.github/workflows/ci.yml`: führt `./mvnw -B verify` bei jedem Push und
+  Pull Request aus. Dort ist Docker vorhanden, daher laufen dort auch die Integrationstests.
+- **`README.md`** mit Architekturdiagramm (Mermaid), Startanleitung, curl-Beispielen, Teststrategie
+  und fachlichen Entscheidungen.
+
+### Warum so entschieden
+- **Testcontainers statt H2-In-Memory-Datenbank**: H2 verhält sich in Details anders als PostgreSQL
+  (Datentypen, SQL-Dialekt). Ein Test gegen H2 kann grün sein, obwohl es in Produktion knallt.
+  Mit Testcontainers testen wir gegen dieselbe Datenbank-Version wie in `docker-compose.yml`.
+- **`disabledWithoutDocker = true`**: Ohne Docker wird der Test übersprungen statt rot. Wer nur
+  schnell die Unit-Tests laufen lassen will, braucht kein Docker. In der CI laufen sie immer.
+- **`*Test` vs. `*IT`**: Surefire führt schnelle Unit-Tests in der Phase `test` aus, Failsafe die
+  langsamen Integrationstests in `integration-test`/`verify`. So bekommt man schnelles Feedback.
+- **`@DynamicPropertySource`**: Der Container bekommt einen zufälligen Port. Diese Methode trägt die
+  echte JDBC-URL zur Laufzeit in die Spring-Konfiguration ein.
+- **MockMvc im Integrationstest**: Wir testen den echten HTTP-Ablauf inklusive JSON, Validierung,
+  Fehlerbehandlung und Transaktionen, ohne einen echten Port öffnen zu müssen.
+- **CI mit dem Maven Wrapper**: Die CI baut genau so wie der Entwickler lokal. `cache: maven` spart
+  das erneute Herunterladen aller Abhängigkeiten bei jedem Lauf.
+
+### Interviewfragen
+1. **„Was ist der Unterschied zwischen Ihren `@WebMvcTest`s und dem Integrationstest?“**
+   `@WebMvcTest` lädt nur die Web-Schicht, der Service ist ein Mock. Das ist schnell und testet
+   JSON, Validierung und Statuscodes. Der Integrationstest lädt alles bis zur echten Datenbank und
+   prüft, dass die Teile zusammenspielen, z. B. dass Status und Audit gemeinsam gespeichert oder
+   gemeinsam zurückgerollt werden.
+2. **„Warum testen Sie nicht alles als Integrationstest?“**
+   Integrationstests sind langsam und zeigen bei einem Fehler schlecht, *wo* er liegt. Die Logik
+   (Tilgung, Regeln, Zustandsautomat) teste ich deshalb mit vielen schnellen Unit-Tests und nur den
+   Gesamtablauf mit wenigen Integrationstests (Testpyramide).
+3. **„Wie stellen Sie sicher, dass niemand kaputten Code in den Hauptzweig bringt?“**
+   Die GitHub Action führt bei jedem Push und Pull Request `./mvnw verify` aus, also alle Tests.
+   In GitHub kann man zusätzlich eine Branch-Protection-Regel setzen, sodass ein Pull Request nur
+   gemergt werden darf, wenn die CI grün ist.

@@ -1,0 +1,25 @@
+# Baut das Projekt und führt alle Tests aus, bei jedem Push und jedem Pull Request.
+# Auf den GitHub-Runnern (ubuntu-latest) ist Docker vorhanden, daher laufen hier
+# auch die Testcontainers-Integrationstests (*IT) mit echter PostgreSQL.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Code auschecken
+        uses: actions/checkout@v4
+
+      - name: JDK 21 einrichten
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Bauen und testen
+        run: ./mvnw -B verify
